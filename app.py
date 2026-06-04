@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 from scipy.optimize import curve_fit
 import warnings
@@ -67,7 +66,6 @@ def fit_sigmoid(df, spend_col, incremental_col):
 with st.sidebar:
     st.markdown("### 📊 Tmall AI BI")
     st.markdown("---")
-    # 修复1: 为 radio 添加非空 label，然后隐藏它
     page = st.radio(
         label="选择功能页面",
         options=["📈 AI 销量预测", "💰 营销预算优化", "📊 活动效果复盘", "📋 综合数据看板"],
@@ -112,14 +110,15 @@ if page == "📈 AI 销量预测":
                                     mode='lines+markers', name='预测销量',
                                     line=dict(color='#f093fb', width=2, dash='dash')))
             fig.update_layout(height=400, xaxis_title="日期", yaxis_title="销量")
-            # 修复2: 使用 width='stretch'
             st.plotly_chart(fig, use_container_width=True)
 
 # ==================== 预算优化 ====================
 elif page == "💰 营销预算优化":
     st.markdown("### 💰 营销预算优化师")
     tab1, tab2 = st.tabs(["📱 RTB 广告", "🏷️ 促销活动"])
+    
     with tab1:
+        st.subheader("RTB 广告投资回报分析")
         result = fit_sigmoid(df, 'rtb_spend', 'incremental_rtb')
         if result[0] is not None:
             popt, x_smooth, y_smooth, raw_data = result
@@ -128,12 +127,31 @@ elif page == "💰 营销预算优化":
             col1.metric("🎯 效率最高点", f"{x0:,.0f} 元")
             col2.metric("📈 饱和上限", f"{L:.0f} 件/天")
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=raw_data[0], y=raw_data[1], mode='markers', name='实际数据', marker=dict(color='#667eea')))
+            fig.add_trace(go.Scatter(x=raw_data[0], y=raw_data[1], mode='markers', name='实际数据', marker=dict(color='#667eea', size=6)))
             fig.add_trace(go.Scatter(x=x_smooth, y=y_smooth, mode='lines', name='S曲线拟合', line=dict(color='#f093fb', width=3)))
             inflection_y = sigmoid_curve(x0, *popt)
-            fig.add_trace(go.Scatter(x=[x0], y=[inflection_y], mode='markers', name='拐点', marker=dict(color='red', size=12)))
+            fig.add_trace(go.Scatter(x=[x0], y=[inflection_y], mode='markers', name='拐点', marker=dict(color='red', size=12, symbol='star')))
             fig.update_layout(height=450, xaxis_title="投资金额(元)", yaxis_title="增量销量(件)")
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("📊 数据量不足，正在生成更多模拟数据...请运行 generate_data.py 重新生成数据")
+    
+    with tab2:
+        st.subheader("促销活动投资回报分析")
+        result = fit_sigmoid(df, 'promotion_spend', 'incremental_promo')
+        if result[0] is not None:
+            popt, x_smooth, y_smooth, raw_data = result
+            L, k, x0 = popt
+            col1, col2 = st.columns(2)
+            col1.metric("🎯 效率最高点", f"{x0:,.0f} 元")
+            col2.metric("📈 饱和上限", f"{L:.0f} 件/天")
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=raw_data[0], y=raw_data[1], mode='markers', name='实际数据', marker=dict(color='#00d4ff', size=6)))
+            fig.add_trace(go.Scatter(x=x_smooth, y=y_smooth, mode='lines', name='S曲线拟合', line=dict(color='#ff6b6b', width=3)))
+            fig.update_layout(height=450, xaxis_title="投资金额(元)", yaxis_title="增量销量(件)")
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("📊 数据量不足，正在生成更多模拟数据...请运行 generate_data.py 重新生成数据")
 
 # ==================== 活动复盘 ====================
 elif page == "📊 活动效果复盘":
@@ -154,36 +172,82 @@ elif page == "📊 活动效果复盘":
             col_a.metric("总销量", f"{total:,.0f}")
             col_b.metric("增量销量", f"{inc:,.0f}")
             col_c.metric("活动天数", f"{len(campaign)}")
+            
+            # 渠道贡献瀑布图
             fig = go.Figure(go.Waterfall(
+                name="销量贡献",
+                orientation="v",
                 measure=["absolute", "relative", "relative", "relative"],
-                x=["基准销量", "RTB", "促销", "直播"],
-                y=[base, campaign['incremental_rtb'].sum(), campaign['incremental_promo'].sum(), campaign['incremental_live'].sum()]
+                x=["基准销量", "RTB广告", "促销活动", "直播带货"],
+                y=[base, campaign['incremental_rtb'].sum(), campaign['incremental_promo'].sum(), campaign['incremental_live'].sum()],
+                text=[f"{base:,.0f}", f"{campaign['incremental_rtb'].sum():,.0f}", 
+                      f"{campaign['incremental_promo'].sum():,.0f}", f"{campaign['incremental_live'].sum():,.0f}"],
+                textposition="outside"
             ))
-            fig.update_layout(height=450)
+            fig.update_layout(height=450, title="活动销量构成瀑布图")
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("所选日期范围内无数据")
 
 # ==================== 数据看板 ====================
 else:
     st.markdown("### 📋 综合数据看板")
     time_range = st.selectbox("时间范围", ["最近30天", "最近90天", "全部数据"], label_visibility="collapsed")
+    
     if time_range == "最近30天":
         plot_df = df.tail(30)
     elif time_range == "最近90天":
         plot_df = df.tail(90)
     else:
         plot_df = df
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=("销量趋势", "渠道增量", "投资分布", "销量分布"))
-    fig.add_trace(go.Scatter(x=plot_df['date'], y=plot_df['final_sales'], mode='lines', name='总销量'), row=1, col=1)
-    fig.add_trace(go.Bar(x=plot_df['date'], y=plot_df['incremental_rtb'], name='RTB'), row=1, col=2)
-    fig.add_trace(go.Bar(x=plot_df['date'], y=plot_df['incremental_promo'], name='促销'), row=1, col=2)
-    total_rtb = plot_df['rtb_spend'].sum()
-    total_promo = plot_df['promotion_spend'].sum()
-    total_live = plot_df['livestreaming_spend'].sum()
-    fig.add_trace(go.Pie(labels=['RTB', '促销', '直播'], values=[total_rtb, total_promo, total_live]), row=2, col=1)
-    fig.add_trace(go.Histogram(x=plot_df['final_sales'], nbinsx=30), row=2, col=2)
-    fig.update_layout(height=600, showlegend=True)
-    st.plotly_chart(fig, use_container_width=True)
+    
+    # 第一行：关键指标
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("总销量", f"{plot_df['final_sales'].sum():,.0f}")
+    col2.metric("平均日销", f"{plot_df['final_sales'].mean():.0f}")
+    col3.metric("总RTB投入", f"{plot_df['rtb_spend'].sum():,.0f}")
+    col4.metric("增量占比", f"{(plot_df['incremental_rtb'].sum()/plot_df['final_sales'].sum()*100):.1f}%")
+    
+    # 销量趋势图
+    st.subheader("📈 销量趋势")
+    fig1 = go.Figure()
+    fig1.add_trace(go.Scatter(x=plot_df['date'], y=plot_df['final_sales'], mode='lines', name='总销量', line=dict(color='#667eea', width=2)))
+    fig1.add_trace(go.Scatter(x=plot_df['date'], y=plot_df['base_sales'], mode='lines', name='基准销量', line=dict(color='gray', width=1.5, dash='dash')))
+    fig1.update_layout(height=400, xaxis_title="日期", yaxis_title="销量")
+    st.plotly_chart(fig1, use_container_width=True)
+    
+    # 第二行：两个图表
+    col_left, col_right = st.columns(2)
+    
+    with col_left:
+        st.subheader("🎯 渠道增量贡献")
+        fig2 = go.Figure()
+        fig2.add_trace(go.Bar(x=plot_df['date'], y=plot_df['incremental_rtb'], name='RTB', marker_color='#667eea'))
+        fig2.add_trace(go.Bar(x=plot_df['date'], y=plot_df['incremental_promo'], name='促销', marker_color='#764ba2'))
+        fig2.add_trace(go.Bar(x=plot_df['date'], y=plot_df['incremental_live'], name='直播', marker_color='#f093fb'))
+        fig2.update_layout(height=400, xaxis_title="日期", yaxis_title="增量销量", barmode='stack')
+        st.plotly_chart(fig2, use_container_width=True)
+    
+    with col_right:
+        st.subheader("💰 投资分布")
+        total_rtb = plot_df['rtb_spend'].sum()
+        total_promo = plot_df['promotion_spend'].sum()
+        total_live = plot_df['livestreaming_spend'].sum()
+        
+        fig3 = go.Figure(data=[go.Pie(
+            labels=['RTB广告', '促销活动', '直播带货'],
+            values=[total_rtb, total_promo, total_live],
+            marker_colors=['#667eea', '#764ba2', '#f093fb'],
+            hole=0.4
+        )])
+        fig3.update_layout(height=400, title="营销投资占比")
+        st.plotly_chart(fig3, use_container_width=True)
+    
+    # 第三行：销量分布
+    st.subheader("📊 销量分布")
+    fig4 = go.Figure(data=[go.Histogram(x=plot_df['final_sales'], nbinsx=30, marker_color='#667eea', opacity=0.7)])
+    fig4.update_layout(height=400, xaxis_title="销量", yaxis_title="频次")
+    st.plotly_chart(fig4, use_container_width=True)
 
 st.markdown("---")
 st.markdown("<p style='text-align:center;color:gray'>🚀 Baseline + Incremental 框架 | AI 驱动决策</p>", unsafe_allow_html=True)
